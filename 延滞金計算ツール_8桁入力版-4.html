@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>薩摩川内市税・延滞金計算ツール</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:16px;background:#f3f6fb;color:#1e293b;font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;line-height:1.55}
+main{max-width:1050px;margin:auto}.panel{background:white;border:1px solid #dbe3ef;border-radius:13px;padding:18px;margin-bottom:16px}
+h1{font-size:1.5rem;margin:0 0 8px}h2{font-size:1.1rem;margin:0 0 12px}.muted{font-size:.9rem;color:#64748b}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:13px}label{display:block;font-weight:650;margin-bottom:5px}.date-inputs{display:flex;gap:6px;align-items:center}.date-inputs input{min-width:0;padding:10px 10px;text-align:left}.date-unit{font-size:.88rem;color:#64748b;white-space:nowrap}
+input{width:100%;padding:10px;border:1px solid #b9c5d6;border-radius:8px;font:inherit;background:white}
+button{border:0;border-radius:8px;padding:11px 14px;font:inherit;font-weight:700;cursor:pointer}.primary{background:#174ea6;color:#fff}.secondary{background:#e8edf5;color:#1e293b}
+.actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:15px}.result{background:#edf5ff;border:1px solid #c7ddff;border-radius:10px;padding:15px;margin-bottom:14px}.big{font-size:2rem;font-weight:800}
+.note{background:#fff8e6;border-left:4px solid #d6a12b;padding:10px 12px;font-size:.9rem}.payment{padding:12px;background:#f6f8fc;border-radius:9px;margin:10px 0}
+.tablewrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:.88rem}th,td{padding:8px;border-bottom:1px solid #dce3ed;text-align:right;white-space:nowrap}th{background:#f3f6fa}th:first-child,td:first-child{text-align:left}
+@media(max-width:600px){body{padding:8px}.panel{padding:12px}.big{font-size:1.6rem}}
+@media print{body{background:#fff;padding:0;font-size:10pt}.panel{box-shadow:none;border:0;padding:0;margin-bottom:12px}#formPanel,.no-print{display:none!important}#output{display:block!important}.result{background:#fff;border:1px solid #888}.tablewrap{overflow:visible}table{font-size:8pt}th,td{white-space:normal;padding:4px}.note{background:#fff}}
+</style>
+</head>
+<body><main>
+<section class="panel" id="formPanel">
+<h1>薩摩川内市税・延滞金計算ツール</h1>
+<p class="muted">延滞金減免日以降は、平成25年以前は通常の延滞金利率、平成26年〜令和2年は国税庁公表の利子税率、令和3年以降は利子税特例基準割合を使う参考計算ツールです。日付は区切り記号なしの8桁（例：20030929）で入力できます。</p>
+<div class="grid">
+<div><label for="principal">本税額（円）</label><input id="principal" type="number" min="1" step="1" value="40000"></div>
+<div><label for="dueDate">納期限（西暦8桁）</label><input id="dueDate" type="text" inputmode="numeric" maxlength="8" placeholder="例：20030929" value="20030929" aria-label="納期限（西暦8桁）"></div>
+<div><label for="paidDate">完納日（西暦8桁）</label><input id="paidDate" type="text" inputmode="numeric" maxlength="8" placeholder="例：20160629" value="20160629" aria-label="完納日（西暦8桁）"></div>
+<div><label for="remissionDate">延滞金減免日（西暦8桁）</label><input id="remissionDate" type="text" inputmode="numeric" maxlength="8" placeholder="例：20080215" value="20080215" aria-label="減免日（西暦8桁）"></div>
+<div><label for="city">自治体名</label><input id="city" type="text" value="薩摩川内市"></div>
+</div>
+<h2 style="margin-top:20px">途中の一部納付（任意）</h2>
+<p class="muted">納付日に本税へ充当された金額を入力してください。減免日以降の割合は、このツールでは指定日当日から適用します。</p>
+<div id="payments"></div>
+<div class="actions no-print"><button class="secondary" id="addPayment" type="button">＋ 一部納付を追加</button></div>
+<div class="actions no-print"><button class="primary" id="calculate" type="button">計算する</button><button class="secondary" id="pdf" type="button">PDF出力／印刷</button><button class="secondary" id="reset" type="button">初期値に戻す</button></div>
+</section>
+<section class="panel" id="output" aria-live="polite"><h2>計算結果</h2><p>入力内容を確認して「計算する」を押してください。</p></section>
+<section class="panel">
+<h2>重要な注意</h2>
+<div class="note">このツールは、依頼内容に基づき、減免日以降の利率を年代別に切り替える参考用です。平成25年以前は通常の延滞金利率、平成26年〜令和2年は国税庁公表の利子税率、令和3年以降は国税庁公表の利子税特例基準割合を使います。ただし、国税の利子税率等を市税の延滞金減免計算に使う扱いが薩摩川内市の正式な規定・減免決定と一致するかは別途確認が必要です。公的な賦課・徴収額の決定には自治体の規定および公式システムを優先してください。</div>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id),DAY=86400000;let paymentId=0;
+function parseDate(raw){
+ let s=String(raw||'').trim().replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[／]/g,'/').replace(/[－ー]/g,'-');
+ if(!s)return null;
+ let m=s.match(/^(明治|大正|昭和|平成|令和)\s*(元|\d+)\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?$/);
+ if(m){const b={明治:1867,大正:1911,昭和:1925,平成:1988,令和:2018}[m[1]];s=(b+(m[2]==='元'?1:Number(m[2])))+'-'+m[3]+'-'+m[4]}
+ else {m=s.match(/^(\d{4})\s*[\/.\-年]\s*(\d{1,2})\s*[\/.\-月]\s*(\d{1,2})\s*日?$/);if(m)s=`${m[1]}-${m[2]}-${m[3]}`;else if(/^\d{8}$/.test(s))s=s.slice(0,4)+'-'+s.slice(4,6)+'-'+s.slice(6,8);else return null}
+ const p=s.split('-').map(Number),d=new Date(Date.UTC(p[0],p[1]-1,p[2]));return d.getUTCFullYear()===p[0]&&d.getUTCMonth()===p[1]-1&&d.getUTCDate()===p[2]?d:null;
+}
+const iso=d=>d.toISOString().slice(0,10),add=(d,n)=>new Date(d.getTime()+n*DAY),diff=(a,b)=>Math.round((b-a)/DAY),yen=n=>Math.floor(n).toLocaleString('ja-JP');
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function dateFields(prefix,date=''){return `<div class="date-inputs"><input id="${prefix}Date" type="text" inputmode="numeric" maxlength="8" placeholder="例：20030929" value="${escapeHtml(date)}" aria-label="日付（西暦8桁）"></div>`}
+function readDate(prefix){const v=$(prefix+'Date').value.trim();if(!v)return '';return parseDate(v)}
+function addPayment(date='',amount=''){const id=++paymentId,div=document.createElement('div');div.className='payment grid';let compact=date?date.replace(/-/g,''):'';div.innerHTML=`<div><label>一部納付日（西暦8桁）</label>${dateFields('payment'+id,compact)}</div><div><label>本税充当額（円）</label><input class="pamount" type="number" min="1" step="1" value="${escapeHtml(amount)}" placeholder="10000"></div><div class="no-print" style="align-self:end"><button class="secondary remove" type="button">この行を削除</button></div>`;div.querySelector('.remove').onclick=()=>div.remove();$('payments').appendChild(div)}
+function rates(y){
+ // [納期限後1か月以内の通常率, 1か月経過後の通常率, 減免日以降に使う利率]
+ // 減免日以降：平成25年以前は通常の延滞金利率、
+ // 平成26〜令和2年は国税庁公表の利子税率、
+ // 令和3年以降は利子税特例基準割合。
+ if(y<=2001)return [4.5,14.6,4.5];
+ if(y<=2006)return [4.1,14.6,4.1];
+ if(y===2007)return [4.4,14.6,4.4];
+ if(y===2008)return [4.7,14.6,4.7];
+ if(y===2009)return [4.5,14.6,4.5];
+ if(y<=2013)return [4.3,14.6,4.3];
+ if(y===2014)return [2.9,9.2,1.9];
+ if(y<=2016)return [2.8,9.1,y===2015?1.8:1.8];
+ if(y===2017)return [2.7,9.0,1.7];
+ if(y<=2020)return [2.6,8.9,1.6];
+ if(y===2021)return [2.5,8.8,1.0];
+ if(y<=2025)return [y===2022?2.4:2.4,8.7,0.9];
+ if(y===2026)return [2.8,9.1,1.3];
+ return null;
+}
+function remissionRate(year, rr, cursor, due){
+ // 減免日以降は、対象年度に応じて次の率を適用。
+ // 平成25年以前：特例基準割合
+ // 平成26年〜令和2年：利子税率
+ // 令和3年以降：利子税特例基準割合
+ return rr[2];
+}
+function remissionLabel(year){
+ if(year<=2013)return '減免日以降：特例基準割合';
+ if(year<=2020)return '減免日以降：当該年度の利子税率';
+ return '減免日以降：当該年度の利子税特例基準割合';
+}
+function firstMonthEnd(d){const y=d.getUTCFullYear(),m=d.getUTCMonth(),day=d.getUTCDate(),n=new Date(Date.UTC(y,m+1,1)),last=new Date(Date.UTC(n.getUTCFullYear(),n.getUTCMonth()+1,0)).getUTCDate();return new Date(Date.UTC(n.getUTCFullYear(),n.getUTCMonth(),Math.min(day,last)))}
+function error(msg){$('output').innerHTML='<h2>計算結果</h2><p>'+escapeHtml(msg)+'</p>'}
+function calculate(){
+ const principal=Number($('principal').value),due=readDate('due'),paid=readDate('paid'),rem=readDate('remission');
+ if(!Number.isSafeInteger(principal)||principal<1||!due||!paid){error('本税額は1円以上の整数、納期限と完納日は正しい日付で入力してください。');return}
+ if(paid<=due){error('完納日は納期限より後の日付にしてください。');return}
+ if(rem===null){error('延滞金減免日は、年・月・日をすべて入力するか、すべて空欄にしてください。');return}
+ const payments=[];
+ for(const row of document.querySelectorAll('.payment')){
+  const dateValue=row.querySelector('input[id$=Date]').value.trim(),as=row.querySelector('.pamount').value.trim();if(!dateValue&&!as)continue;
+  const d=dateValue?parseDate(dateValue):null,amount=Number(as);if(!d||!Number.isSafeInteger(amount)||amount<1){error('一部納付日と本税充当額を確認してください。');return}
+  if(d<=due||d>=paid){error('一部納付日は納期限より後、完納日より前にしてください。');return}
+  payments.push({date:d,amount});
+ }
+ payments.sort((a,b)=>a.date-b.date);for(let i=1;i<payments.length;i++)if(+payments[i].date===+payments[i-1].date){error('同じ日の一部納付は1行にまとめてください。');return}
+ let check=principal;for(const p of payments){if(p.amount>check){error('一部納付額の合計が本税額を超えています。');return}check-=p.amount}
+ const segments=[];let balance=principal,cursor=add(due,1);
+ const stops=[...payments,{date:paid,amount:0}];
+ function addSegment(a,b,rate,balance,label){
+  if(b<a)return;const days=diff(a,b)+1,base=Math.floor(balance/1000)*1000,raw=base<2000?0:base*(rate/100)*days/365;
+  segments.push({from:iso(a),to:iso(b),days,rate,balance,base,raw,yen:Math.floor(raw),label});
+ }
+ for(const stop of stops){
+  while(cursor<=stop.date&&balance>0){
+   const year=cursor.getUTCFullYear(),yearEnd=new Date(Date.UTC(year,11,31)),pieceEnd=yearEnd<stop.date?yearEnd:stop.date,rr=rates(year);
+   if(!rr){error(`${year}年の税率データがありません。公式割合を確認してください。`);return}
+   if(rem&&cursor>=rem){const r=remissionRate(year,rr,cursor,due);if(r===null){addNormal(cursor,pieceEnd,year,rr,balance)}else{addSegment(cursor,pieceEnd,r,balance,remissionLabel(year))}cursor=add(pieceEnd,1);continue}
+   if(rem&&pieceEnd>=rem&&cursor<rem){const beforeEnd=add(rem,-1);addNormal(cursor,beforeEnd,year,rr,balance);cursor=rem;continue}
+   addNormal(cursor,pieceEnd,year,rr,balance);cursor=add(pieceEnd,1);
+  }
+  if(stop.amount){balance-=stop.amount;cursor=add(stop.date,1)}
+ }
+ function addNormal(a,b,year,rr,bal){
+  if(b<a)return;const firstEnd=firstMonthEnd(due),earlyEnd=b<firstEnd?b:firstEnd;
+  if(a<=earlyEnd)addSegment(a,earlyEnd,rr[0],bal,'通常：納期限後1か月以内');
+  const lateStart=a>firstEnd?a:add(firstEnd,1);
+  if(lateStart<=b)addSegment(lateStart,b,rr[1],bal,'通常：納期限後1か月経過後');
+ }
+ const rawTotal=segments.reduce((s,x)=>s+x.yen,0),final=rawTotal<1000?0:Math.floor(rawTotal/100)*100,paymentTotal=payments.reduce((s,p)=>s+p.amount,0);
+ let html=`<h2>計算結果</h2><div class="result"><div class="muted">延滞金（参考計算）</div><div class="big">${yen(final)}円</div><div>期間別計算額合計：${yen(rawTotal)}円</div></div>`;
+ html+=`<p><b>自治体：</b>${escapeHtml($('city').value||'未入力')}　<b>本税：</b>${yen(principal)}円　<b>一部納付合計：</b>${yen(paymentTotal)}円</p>`;
+ html+=`<p><b>納期限：</b>${iso(due)}　<b>完納日：</b>${iso(paid)}　<b>減免日：</b>${rem?iso(rem):'未設定（通常率）'}</p>`;
+ if(payments.length)html+='<p><b>一部納付内訳</b></p><ul>'+payments.map(p=>`<li>${iso(p.date)}：本税充当額 ${yen(p.amount)}円</li>`).join('')+'</ul>';
+ html+='<div class="tablewrap"><table><thead><tr><th>対象期間</th><th>適用区分</th><th>本税残額</th><th>計算基礎額</th><th>年率</th><th>日数</th><th>期間別金額</th></tr></thead><tbody>';
+ for(const s of segments)html+=`<tr><td>${s.from}〜${s.to}</td><td>${s.label}</td><td>${yen(s.balance)}円</td><td>${yen(s.base)}円</td><td>${s.rate.toFixed(1)}%</td><td>${s.days}</td><td>${yen(s.yen)}円</td></tr>`;
+ html+=`</tbody></table></div><p>端数処理：各期間の1円未満切捨て。合計が1,000円未満の場合は0円、1,000円以上の場合は100円未満切捨て。</p>`;
+ html+='<div class="note">参考計算です。減免日以降は、平成25年以前は該当年度の特例基準割合、平成26年〜令和2年は該当年度の利子税率、令和3年以降は該当年度の利子税特例基準割合を適用します。国税庁の利子税率等を市税の延滞金減免に用いる扱いが、自治体の正式な減免決定・条例と一致するかは確認してください。</div>';
+ $('output').innerHTML=html;
+}
+$('addPayment').addEventListener('click',()=>addPayment());
+$('calculate').addEventListener('click',calculate);
+$('pdf').addEventListener('click',()=>{calculate();window.print()});
+$('reset').addEventListener('click',()=>{$('principal').value=40000;[['dueDate','20030929'],['paidDate','20160629'],['remissionDate','20080215']].forEach(([id,v])=>$(id).value=v);$('city').value='薩摩川内市';$('payments').innerHTML='';calculate()});
+calculate();
+</script>
+</body></html>
